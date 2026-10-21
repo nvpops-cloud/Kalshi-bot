@@ -59,6 +59,12 @@ table{width:100%;border-collapse:collapse;font:12.5px ui-monospace,Menlo,monospa
     <div class="mono muted" id="status"><span class="dot" id="dot"></span>Stopped</div></header>
 
   <div id="conn" class="banner info">Checking connection to Kalshi…</div>
+  <section class="panel" id="relayBox" hidden>
+    <div class="field"><label for="relayUrl">Relay link</label>
+      <input id="relayUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://kalshi-relay.yourname.workers.dev"></div>
+    <button id="saveRelay">Connect</button>
+    <div class="muted" style="font-size:13px">Your own free Cloudflare Worker that passes requests to Kalshi. Claude can walk you through making one.</div>
+  </section>
 
   <section class="panel">
     <div class="k">Mode</div>
@@ -161,8 +167,11 @@ async function makeSigner(pem){
   const k=await crypto.subtle.importKey("pkcs8",der,{name:"RSA-PSS",hash:"SHA-256"},false,["sign"]);
   return async m=>b64(await crypto.subtle.sign({name:"RSA-PSS",saltLength:32},k,new TextEncoder().encode(m)))}
 class ApiError extends Error{constructor(status,body){super("Kalshi "+status+": "+body);this.status=status}}
+let relay=store.get("kb_relay","");
 async function api(method,path,{params,body,signed=false}={}){
-  const base=URLS[mode];let url=base+path;
+  const base=URLS[mode];
+  // Kalshi blocks web pages, so requests go through your own Cloudflare relay when one is set.
+  let url=relay?relay.replace(/\/+$/,"")+"/"+(mode==="demo"?"demo":"prod")+path:base+path;
   if(params)url+="?"+new URLSearchParams(params).toString();
   const h={Accept:"application/json"};if(body)h["Content-Type"]="application/json";
   if(signed){if(!signer)throw new ApiError(0,"no API key loaded");const ts=String(Date.now());const full=new URL(base).pathname+path;
@@ -296,7 +305,9 @@ function setMode(m){if(running){banner("Stop the bot before switching modes.");r
   const saved=store.get("kb_key_"+m,null);$("keyId").value=saved?saved.id:"";$("pem").value=saved?saved.pem:"";$("remember").checked=!!saved;$("confirm").value="";render()}
 function banner(msg){$("banners").innerHTML=`<div class="banner bad">${esc(msg)}</div>`}
 function setConn(s){const c=$("conn");if(s==="ok"){c.className="banner ok";c.textContent="Connected to Kalshi."}
-  else if(s==="blocked"){c.className="banner bad";c.innerHTML="Kalshi isn't letting this page connect. This happens when Kalshi blocks requests from web pages, or when you're offline. Tell Claude you saw this message."}}
+  else if(s==="blocked"){c.className="banner bad";c.innerHTML=relay?"Can't reach Kalshi through your relay. Check the relay link below, or your internet connection.":"Kalshi blocks web pages from connecting directly. Paste your Cloudflare relay link below to connect."}
+  $("relayBox").hidden=(s==="ok")}
+async function testConn(){try{await api("GET","/exchange/status");setConn("ok")}catch(e){setConn(e.status===0?"blocked":"ok")}}
 
 // ================= render =================
 function render(){
@@ -365,7 +376,10 @@ $("resetPaper").onclick=()=>{if(mode!=="paper"){banner("Switch to Paper to reset
 $("forget").onclick=()=>{store.del("kb_key_demo");store.del("kb_key_live");$("keyId").value="";$("pem").value="";$("remember").checked=false;$("banners").innerHTML='<div class="banner ok">Saved keys removed from this phone.</div>'};
 
 fillSettings();setMode(mode);
+$("relayUrl").value=relay;
+$("saveRelay").onclick=async()=>{let v=$("relayUrl").value.trim();if(v&&!/^https:\/\//.test(v))v="https://"+v;relay=v;$("relayUrl").value=v;store.set("kb_relay",v);
+  $("conn").className="banner info";$("conn").textContent="Checking connection to Kalshi…";await testConn()};
 // Connection test: one public call to Kalshi.
-api("GET","/exchange/status").then(()=>setConn("ok")).catch(e=>setConn(e.status===0?"blocked":"ok"));
+testConn();
 </script>
 </body></html>
