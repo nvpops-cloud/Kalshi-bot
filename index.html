@@ -117,7 +117,11 @@ table{width:100%;border-collapse:collapse;font:12.5px ui-monospace,Menlo,monospa
 // ================= config =================
 const URLS={paper:"https://api.elections.kalshi.com/trade-api/v2",live:"https://api.elections.kalshi.com/trade-api/v2",demo:"https://demo-api.kalshi.co/trade-api/v2"};
 const PHRASE="I understand I can lose real money";
-const MARKETS=[["Gold","KXGOLDD",0],["Silver","KXSILVERD",2],["WTI Crude","KXWTI",2],["Natural Gas","KXNATGASD",3],["Copper","KXCOPPERD",3]];
+// Each commodity lists its Kalshi series from shortest to longest horizon. The bot uses the soonest-closing
+// event that has yesterday's prices to compare against (brand-new daily markets don't, so it falls back).
+const MARKETS=[["Gold",["KXGOLDD","KXGOLDMON"],0],["Silver",["KXSILVERD","KXSILVERW","KXSILVERMON"],2],["WTI Crude",["KXWTI"],2],
+  ["Natural Gas",["KXNATGASD","KXNATGASW"],3],["Copper",["KXCOPPERD","KXCOPPERW","KXCOPPERMON"],3]];
+const MAX_QUOTE_GAP=0.15; // strikes with a bid/ask gap wider than this are ignored when finding the 50/50 price
 const DEFAULTS={maxTrade:10,maxLoss:25,tp:40,sl:35,maxOpen:3,maxTrades:10,strength:"moderate",every:60,
   maxSpread:0.04,minVol:50,priceLo:0.35,priceHi:0.65,minHoursToClose:2,exitHoursBeforeClose:1,cooldownMin:60,paperStart:500};
 const RANK={"no clear lean":0,"no data":0,slight:1,moderate:2,strong:3};
@@ -187,12 +191,18 @@ function buildLadders(markets){const L={};
 function median(pts){pts=pts.slice().sort((a,b)=>a[0]-b[0]);const c=[];for(const [x,p] of pts){c.push([x,c.length?Math.min(p,c[c.length-1][1]):p])}
   for(let i=1;i<c.length;i++){const [x0,p0]=c[i-1],[x1,p1]=c[i];if(p0>=.5&&p1<=.5)return p0===p1?(x0+x1)/2:x0+(p0-.5)*(x1-x0)/(p0-p1)}return null}
 function strengthOf(pct){const a=Math.abs(pct);if(a<.15)return["flat","no clear lean"];const d=pct>0?"up":"down";return[d,a<.5?"slight":a<1.5?"moderate":"strong"]}
+const hasPrev=r=>r.pbid>0&&r.pask>0&&r.pask-r.pbid<=MAX_QUOTE_GAP;
+const goodNow=r=>r.ask-r.bid<=MAX_QUOTE_GAP;
 function readLadder(name,event,rungs){const mid=r=>(r.bid+r.ask)/2,pmid=r=>(r.pbid+r.pask)/2;
-  const now=median(rungs.map(r=>[r.strike,mid(r)]));const hasPrev=rungs.some(r=>r.pbid>0||r.pask>0);const was=hasPrev?median(rungs.map(r=>[r.strike,pmid(r)])):null;
+  const nowR=rungs.filter(goodNow),prevR=rungs.filter(hasPrev);
+  const now=nowR.length>=3?median(nowR.map(r=>[r.strike,mid(r)])):null;const was=prevR.length>=3?median(prevR.map(r=>[r.strike,pmid(r)])):null;
   const close=rungs[0].close;if(now==null||was==null||!was)return{name,event,close,now,was,pct:0,dir:"none",strength:"no data",rungs};
   const pct=(now-was)/was*100;const [dir,strength]=strengthOf(pct);return{name,event,close,now,was,pct,dir,strength,rungs}}
-function nearest(markets){const L=buildLadders(markets);let best=null;const now=Date.now();
-  for(const ev in L){const r=L[ev];if(r.length<4||r[0].close<=now)continue;if(!best||r[0].close<best[1][0].close)best=[ev,r]}return best}
+// Soonest event that still has time left to trade and has both today's and yesterday's prices.
+function nearest(markets){const L=buildLadders(markets);let best=null;const minClose=Date.now()+cfg.minHoursToClose*36e5;
+  for(const ev in L){const r=L[ev];if(r.length<4||r[0].close<=minClose)continue;
+    if(r.filter(goodNow).length<3||r.filter(hasPrev).length<3)continue;
+    if(!best||r[0].close<best[1][0].close)best=[ev,r]}return best}
 
 // ================= broker =================
 const fee=(c,p)=>Math.ceil(0.07*c*p*(1-p)*100-1e-9)/100;
@@ -220,9 +230,10 @@ const rungByTicker=t=>{for(const k in ladders)for(const r of ladders[k].rungs)if
 const lossHalted=()=>S.day_realized<=-Math.abs(cfg.maxLoss);
 
 async function refreshSignals(){const reads={};ladders={};
-  await Promise.all(MARKETS.map(async([name,series,dp])=>{
-    try{const best=nearest(await marketsFor(series));
-      if(!best){reads[name]={name,dir:"none",strength:"no open market"};return}
+  await Promise.all(MARKETS.map(async([name,seriesList,dp])=>{
+    try{let best=null;
+      for(const series of seriesList){best=nearest(await marketsFor(series));if(best)break}
+      if(!best){reads[name]={name,dir:"none",strength:"no tradable market right now"};return}
       const rd=readLadder(name,best[0],best[1]);ladders[name]=rd;
       reads[name]={name,dp,dir:rd.dir,strength:rd.strength,now:rd.now,pct:rd.pct,close:fmtT(rd.close)}}
     catch(e){reads[name]={name,dir:"none",strength:e.status===0?"can't reach Kalshi":"error "+e.status};if(e.status===0)throw e}}));
@@ -307,7 +318,10 @@ function render(){
   if(!n&&!st.even)$("record").innerHTML='<div class="muted">No finished trades yet. Your record starts with the first closed trade.</div>';
   else{const wr=n?Math.round(st.wins/n*100):0,aw=st.wins?st.gross_win/st.wins:0,al=st.losses?st.gross_loss/st.losses:0;
     const streak=st.streak>0?st.streak+" win"+(st.streak>1?"s":"")+" in a row":st.streak<0?(-st.streak)+" loss"+(st.streak<-1?"es":"")+" in a row":"–";
+    const be=(st.wins&&st.losses)?Math.round(al/(aw+al)*100):null;
+    const verdict=n<20?`Early days: judge it after 20+ trades (${n} so far).`:be==null?"":(wr>=be?`Profitable pace: you win ${wr}% and need ${be}%.`:`Losing pace: you win ${wr}% but need ${be}% to profit. Don't go live yet.`);
     $("record").innerHTML=`<div><div class="big"><span class="pos">${st.wins}W</span> <span class="muted">–</span> <span class="neg">${st.losses}L</span></div><div class="mono muted">${wr}% win rate · ${streak}</div></div>
+    <div class="banner ${n<20||be==null?"info":wr>=be?"ok":"bad"}" style="font-size:14px">${esc(verdict||"Need at least one win and one loss to work out the break-even rate.")}${be!=null?`<div class="mono" style="font-weight:500;font-size:12px;margin-top:4px">Break-even win rate: ${be}% (from your average win vs average loss, after fees)</div>`:""}</div>
     <div class="stats"><div><div class="k">Total P&amp;L</div><div class="v ${st.total_pnl>0?"pos":st.total_pnl<0?"neg":""}">${money(st.total_pnl)}</div></div><div><div class="k">Avg win</div><div class="v pos">${money(aw)}</div></div><div><div class="k">Avg loss</div><div class="v neg">${money(-al)}</div></div></div>
     <div class="mono muted" style="font-size:12px">Best ${st.best?esc(st.best.name)+" "+money(st.best.pnl):"–"} · Worst ${st.worst?esc(st.worst.name)+" "+money(st.worst.pnl):"–"}</div>`+
     Object.entries(st.by_name).map(([k,b])=>`<div class="row"><b>${esc(k)}</b><span class="mono"><span class="pos">${b.wins}W</span>–<span class="neg">${b.losses}L</span> · <span class="${b.pnl>0?"pos":b.pnl<0?"neg":""}">${money(b.pnl)}</span></span></div>`).join("")}
