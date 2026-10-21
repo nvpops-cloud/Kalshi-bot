@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#eef0ec">
+<title>Commodity Bot</title>
+<style>
+/* One column, phone first: status + Start button, record, chart, signals, positions, activity. */
+:root{--bg:#eef0ec;--panel:#fbfbf8;--ink:#1c2420;--muted:#5d6a63;--line:#d3d9d3;--brass:#9a6b14;
+--up:#16794a;--up-bg:#dcefe3;--down:#b3261e;--down-bg:#f6dedb;--flat:#6b6f72;--flat-bg:#e6e7e6;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#141917;--panel:#1c2320;--ink:#e6ebe7;--muted:#97a49c;--line:#2f3934;
+--brass:#d7a446;--up:#4fcf8a;--up-bg:#16362a;--down:#ff7a6e;--down-bg:#3d1d1a;--flat:#b4b8ba;--flat-bg:#2a2f2d;color-scheme:dark}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,system-ui,"Segoe UI",sans-serif}
+.wrap{max-width:640px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 14px) max(16px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 40px) max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px}
+h1{font:800 28px/1.05 "Arial Narrow","Helvetica Neue",system-ui,sans-serif;margin:2px 0 0;letter-spacing:-.01em}
+.k{font:600 11px ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.v{font:600 18px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.chip{padding:4px 10px;border-radius:8px;font:800 14px ui-monospace,monospace;white-space:nowrap;text-align:center}
+.up{background:var(--up-bg);color:var(--up)}.down{background:var(--down-bg);color:var(--down)}.flat,.none{background:var(--flat-bg);color:var(--flat)}
+.pos{color:var(--up)}.neg{color:var(--down)}
+button,select,input,textarea{font:inherit;color:var(--ink)}
+button{font-weight:700;padding:13px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+button.go{background:var(--up);border-color:var(--up);color:#fff;font-size:18px;padding:16px}
+button.stop{background:var(--ink);border-color:var(--ink);color:var(--bg);font-size:18px;padding:16px}
+button.kill{background:var(--down);border-color:var(--down);color:#fff}
+button:disabled{opacity:.5}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.banner{padding:10px 12px;border-radius:10px;font-weight:600}.banner.bad{background:var(--down-bg);color:var(--down)}.banner.ok{background:var(--up-bg);color:var(--up)}.banner.info{background:var(--flat-bg);color:var(--ink)}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.modes button{padding:10px 4px}.modes button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.modes button.live[aria-pressed="true"]{background:var(--down);border-color:var(--down);color:#fff}
+label{font-weight:600;font-size:14px}
+input,textarea,select{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);background:var(--bg)}
+textarea{min-height:110px;font:12px ui-monospace,Menlo,monospace}
+.field{display:flex;flex-direction:column;gap:5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+details summary{cursor:pointer;font-weight:700;color:var(--brass);list-style:none}details summary::-webkit-details-marker{display:none}
+.big{font:800 32px/1.05 "Arial Narrow","Helvetica Neue",system-ui,sans-serif}
+#chart svg{display:block;width:100%;height:auto}#chart text{font:11px ui-monospace,Menlo,monospace;fill:var(--muted)}
+table{width:100%;border-collapse:collapse;font:12.5px ui-monospace,Menlo,monospace}td{padding:6px 4px;border-top:1px solid var(--line);vertical-align:top}
+.scroll{overflow-x:auto}
+#toasts{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top) + 10px) max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;z-index:20}
+.toast{pointer-events:auto;background:var(--up);color:#fff;border-radius:14px;padding:12px 16px;box-shadow:0 6px 20px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;max-width:420px;width:100%;animation:pop .35s ease-out}
+.toast b{font:800 26px/1 "Arial Narrow","Helvetica Neue",system-ui,sans-serif}.toast small{display:block;opacity:.92;font-size:13px}
+.toast button{margin-left:auto;background:transparent;border:0;color:#fff;font-size:22px;padding:2px 8px}
+@keyframes pop{from{transform:translateY(-14px) scale(.96);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.toast{animation:none}}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--flat);margin-right:6px;vertical-align:middle}.dot.on{background:var(--up);box-shadow:0 0 0 4px var(--up-bg)}
+</style></head><body>
+<div id="toasts" aria-live="polite"></div>
+<div class="wrap">
+  <header><span class="k">Kalshi commodities</span><h1>Commodity Bot</h1>
+    <div class="mono muted" id="status"><span class="dot" id="dot"></span>Stopped</div></header>
+
+  <div id="conn" class="banner info">Checking connection to Kalshi…</div>
+
+  <section class="panel">
+    <div class="k">Mode</div>
+    <div class="modes" role="group" aria-label="Mode">
+      <button id="m-paper" data-mode="paper">Paper</button>
+      <button id="m-demo" data-mode="demo">Demo</button>
+      <button id="m-live" data-mode="live" class="live">Live $</button>
+    </div>
+    <div id="modeNote" class="muted" style="font-size:14px"></div>
+    <div id="keyBox" hidden>
+      <div class="field"><label for="keyId">API Key ID</label><input id="keyId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="from Kalshi's API Keys page"></div>
+      <div class="field" style="margin-top:10px"><label for="pem">Private key</label><textarea id="pem" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----"></textarea></div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:500"><input type="checkbox" id="remember" style="width:auto"> Remember key on this phone</label>
+      <div class="field" id="confirmBox" hidden style="margin-top:10px"><label for="confirm">Type: I understand I can lose real money</label><input id="confirm" autocomplete="off"></div>
+    </div>
+    <button id="startBtn" class="go">Start</button>
+    <div class="btns"><button id="pauseBtn">Pause new trades</button><button id="killBtn" class="kill">Kill: sell all</button></div>
+    <div id="killConfirm" hidden class="btns"><button id="killYes" class="kill">Yes, sell everything</button><button id="killNo">Cancel</button></div>
+    <div class="muted" style="font-size:13px">Runs only while this page is open with the screen on. It keeps your screen awake while running.</div>
+  </section>
+
+  <div id="banners"></div>
+
+  <section class="panel stats">
+    <div><div class="k">Balance</div><div class="v" id="bal">–</div></div>
+    <div><div class="k">Today</div><div class="v" id="today">$0.00</div></div>
+    <div><div class="k">Trades today</div><div class="v" id="nt">0</div></div>
+  </section>
+
+  <section class="panel"><div class="k">Wins &amp; losses</div><div id="record"></div></section>
+  <section class="panel"><div class="k">Profit over time</div><div id="chart"></div></section>
+  <section class="panel"><div class="k">Signals</div><div id="signals"><div class="muted">Tap Start to read the markets.</div></div></section>
+  <section class="panel"><div class="k">Open positions</div><div id="positions"></div></section>
+  <section class="panel"><div class="k">Recent activity</div><div class="scroll"><table id="trades"></table></div></section>
+
+  <section class="panel">
+    <details><summary>Settings</summary>
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label for="s-maxTrade">Max $ per trade</label><input id="s-maxTrade" type="number" inputmode="decimal" min="1"></div>
+        <div class="field"><label for="s-maxLoss">Stop after losing $ / day</label><input id="s-maxLoss" type="number" inputmode="decimal" min="1"></div>
+        <div class="field"><label for="s-tp">Take profit %</label><input id="s-tp" type="number" inputmode="decimal"></div>
+        <div class="field"><label for="s-sl">Stop loss %</label><input id="s-sl" type="number" inputmode="decimal"></div>
+        <div class="field"><label for="s-maxOpen">Max open positions</label><input id="s-maxOpen" type="number" inputmode="numeric"></div>
+        <div class="field"><label for="s-maxTrades">Max trades / day</label><input id="s-maxTrades" type="number" inputmode="numeric"></div>
+        <div class="field"><label for="s-strength">Signal needed</label><select id="s-strength"><option value="slight">Slight+</option><option value="moderate">Moderate+</option><option value="strong">Strong only</option></select></div>
+        <div class="field"><label for="s-every">Check every (sec)</label><input id="s-every" type="number" inputmode="numeric" min="20"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button id="saveSettings">Save settings</button><button id="resetPaper">Reset paper account</button><button id="forget">Forget saved key</button></div>
+    </details>
+  </section>
+  <p class="muted" style="font-size:13px;margin:0">The bot follows what Kalshi traders are pricing. It will lose some trades. Only put in money you can afford to lose. Not financial advice.</p>
+</div>
+
+<script>
+"use strict";
+// ================= config =================
+const URLS={paper:"https://api.elections.kalshi.com/trade-api/v2",live:"https://api.elections.kalshi.com/trade-api/v2",demo:"https://demo-api.kalshi.co/trade-api/v2"};
+const PHRASE="I understand I can lose real money";
+const MARKETS=[["Gold","KXGOLDD",0],["Silver","KXSILVERD",2],["WTI Crude","KXWTI",2],["Natural Gas","KXNATGASD",3],["Copper","KXCOPPERD",3]];
+const DEFAULTS={maxTrade:10,maxLoss:25,tp:40,sl:35,maxOpen:3,maxTrades:10,strength:"moderate",every:60,
+  maxSpread:0.04,minVol:50,priceLo:0.35,priceHi:0.65,minHoursToClose:2,exitHoursBeforeClose:1,cooldownMin:60,paperStart:500};
+const RANK={"no clear lean":0,"no data":0,slight:1,moderate:2,strong:3};
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+let cfg=Object.assign({},DEFAULTS,store.get("kb_cfg",{}));
+let mode=store.get("kb_mode","paper");
+let S=null; // state for current mode
+let running=false,timer=null,busy=false,wake=null,signer=null,ladders={},liveKey={id:"",pem:""};
+
+function etNow(){return new Date()}
+function fmtT(d){return d.toLocaleString("en-US",{timeZone:"America/New_York",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}
+function dayKey(){return new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"})}
+const money=x=>(x<0?"-$":"$")+Math.abs(x).toFixed(2);
+const esc=x=>String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num=(x,d=0)=>{const v=parseFloat(x);return isNaN(v)?d:v};
+
+function freshState(){return{paper_balance:cfg.paperStart,positions:[],trades:[],day:dayKey(),day_realized:0,day_trades:0,paused:false,killed:false,reads:{},balance:null,last_exit:{},equity:[],
+  stats:{wins:0,losses:0,even:0,total_pnl:0,gross_win:0,gross_loss:0,best:null,worst:null,streak:0,by_name:{}},seen:0}}
+function loadState(){S=Object.assign(freshState(),store.get("kb_state_"+mode,{}))}
+function saveState(){store.set("kb_state_"+mode,S)}
+function rollDay(){if(S.day!==dayKey()){S.day=dayKey();S.day_realized=0;S.day_trades=0}}
+function logTrade(e){e.t=fmtT(new Date());S.trades.push(e);S.trades=S.trades.slice(-300)}
+
+// ================= Kalshi API =================
+function b64(buf){let s="";const a=new Uint8Array(buf);for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s)}
+function pemToDer(pem){const body=pem.replace(/-----[^-]+-----/g,"").replace(/\\n/g,"").replace(/\s+/g,"");const bin=atob(body);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u}
+function derLen(n){if(n<128)return[n];const b=[];while(n>0){b.unshift(n&255);n>>=8}return[0x80|b.length,...b]}
+function pkcs1ToPkcs8(p1){ // wrap an RSA PKCS#1 key so WebCrypto can import it
+  const alg=[0x30,0x0d,0x06,0x09,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01,0x05,0x00];
+  const oct=[0x04,...derLen(p1.length),...p1];const inner=[0x02,0x01,0x00,...alg,...oct];
+  return new Uint8Array([0x30,...derLen(inner.length),...inner])}
+async function makeSigner(pem){
+  const isPkcs1=/BEGIN RSA PRIVATE KEY/.test(pem);let der=pemToDer(pem);if(isPkcs1)der=pkcs1ToPkcs8(der);
+  if(!isPkcs1){try{const k=await crypto.subtle.importKey("pkcs8",der,{name:"Ed25519"},false,["sign"]);
+    return async m=>b64(await crypto.subtle.sign({name:"Ed25519"},k,new TextEncoder().encode(m)))}catch(e){}}
+  const k=await crypto.subtle.importKey("pkcs8",der,{name:"RSA-PSS",hash:"SHA-256"},false,["sign"]);
+  return async m=>b64(await crypto.subtle.sign({name:"RSA-PSS",saltLength:32},k,new TextEncoder().encode(m)))}
+class ApiError extends Error{constructor(status,body){super("Kalshi "+status+": "+body);this.status=status}}
+async function api(method,path,{params,body,signed=false}={}){
+  const base=URLS[mode];let url=base+path;
+  if(params)url+="?"+new URLSearchParams(params).toString();
+  const h={Accept:"application/json"};if(body)h["Content-Type"]="application/json";
+  if(signed){if(!signer)throw new ApiError(0,"no API key loaded");const ts=String(Date.now());const full=new URL(base).pathname+path;
+    h["KALSHI-ACCESS-KEY"]=liveKey.id;h["KALSHI-ACCESS-TIMESTAMP"]=ts;h["KALSHI-ACCESS-SIGNATURE"]=await signer(ts+method+full)}
+  let r;try{r=await fetch(url,{method,headers:h,body:body?JSON.stringify(body):undefined})}
+  catch(e){throw new ApiError(0,"blocked or offline")}
+  const t=await r.text();if(!r.ok)throw new ApiError(r.status,t.slice(0,200));return t?JSON.parse(t):{}}
+async function marketsFor(series){
+  let out=[],cursor="";const ts=Math.floor(Date.now()/1000);
+  for(let i=0;i<5;i++){const p={series_ticker:series,status:"open",min_close_ts:ts,limit:1000};if(cursor)p.cursor=cursor;
+    const d=await api("GET","/markets",{params:p});out=out.concat(d.markets||[]);cursor=d.cursor;if(!cursor)break}
+  return out}
+async function liveBalance(){const d=await api("GET","/portfolio/balance",{signed:true});return d.balance_dollars!=null?num(d.balance_dollars):num(d.balance)/100}
+async function livePositions(){const d=await api("GET","/portfolio/positions",{params:{limit:1000,count_filter:"position"},signed:true});const o={};
+  for(const p of d.market_positions||[]){const n=num(p.position_fp);if(Math.abs(n)>0)o[p.ticker]=n}return o}
+async function placeOrder(ticker,side,count,yesPrice,reduceOnly){
+  const body={ticker,side,count:String(Math.floor(count)),price:yesPrice.toFixed(4),time_in_force:"immediate_or_cancel",self_trade_prevention_type:"taker_at_cross",client_order_id:crypto.randomUUID()};
+  if(reduceOnly)body.reduce_only=true;return api("POST","/portfolio/events/orders",{body,signed:true})}
+
+// ================= signals =================
+function buildLadders(markets){const L={};
+  for(const m of markets){if(m.strike_type!=="greater"||m.floor_strike==null)continue;
+    const r={ticker:m.ticker,strike:num(m.floor_strike),bid:num(m.yes_bid_dollars),ask:num(m.yes_ask_dollars,1)||1,pbid:num(m.previous_yes_bid_dollars),pask:num(m.previous_yes_ask_dollars),vol:num(m.volume_24h_fp),close:new Date(m.close_time)};
+    (L[m.event_ticker]=L[m.event_ticker]||[]).push(r)}
+  for(const k in L)L[k].sort((a,b)=>a.strike-b.strike);return L}
+function median(pts){pts=pts.slice().sort((a,b)=>a[0]-b[0]);const c=[];for(const [x,p] of pts){c.push([x,c.length?Math.min(p,c[c.length-1][1]):p])}
+  for(let i=1;i<c.length;i++){const [x0,p0]=c[i-1],[x1,p1]=c[i];if(p0>=.5&&p1<=.5)return p0===p1?(x0+x1)/2:x0+(p0-.5)*(x1-x0)/(p0-p1)}return null}
+function strengthOf(pct){const a=Math.abs(pct);if(a<.15)return["flat","no clear lean"];const d=pct>0?"up":"down";return[d,a<.5?"slight":a<1.5?"moderate":"strong"]}
+function readLadder(name,event,rungs){const mid=r=>(r.bid+r.ask)/2,pmid=r=>(r.pbid+r.pask)/2;
+  const now=median(rungs.map(r=>[r.strike,mid(r)]));const hasPrev=rungs.some(r=>r.pbid>0||r.pask>0);const was=hasPrev?median(rungs.map(r=>[r.strike,pmid(r)])):null;
+  const close=rungs[0].close;if(now==null||was==null||!was)return{name,event,close,now,was,pct:0,dir:"none",strength:"no data",rungs};
+  const pct=(now-was)/was*100;const [dir,strength]=strengthOf(pct);return{name,event,close,now,was,pct,dir,strength,rungs}}
+function nearest(markets){const L=buildLadders(markets);let best=null;const now=Date.now();
+  for(const ev in L){const r=L[ev];if(r.length<4||r[0].close<=now)continue;if(!best||r[0].close<best[1][0].close)best=[ev,r]}return best}
+
+// ================= broker =================
+const fee=(c,p)=>Math.ceil(0.07*c*p*(1-p)*100-1e-9)/100;
+const buyCost=(r,o)=>o==="yes"?r.ask:1-r.bid;
+const sellValue=(r,o)=>o==="yes"?r.bid:1-r.ask;
+async function buy(r,o,count){
+  if(mode==="paper"){const p=buyCost(r,o),f=fee(count,p),tot=count*p+f;if(tot>S.paper_balance)return null;S.paper_balance-=tot;return{count,price:p,fee:f}}
+  const resp=o==="yes"?await placeOrder(r.ticker,"bid",count,r.ask):await placeOrder(r.ticker,"ask",count,r.bid);return parseFill(resp,o)}
+async function sell(pos,r){
+  if(mode==="paper"){const p=sellValue(r,pos.outcome),f=fee(pos.count,p);S.paper_balance+=pos.count*p-f;return{count:pos.count,price:p,fee:f}}
+  const resp=pos.outcome==="yes"?await placeOrder(r.ticker,"ask",pos.count,r.bid,true):await placeOrder(r.ticker,"bid",pos.count,r.ask,true);return parseFill(resp,pos.outcome)}
+function parseFill(resp,o){const n=Math.floor(num(resp.fill_count));if(n<=0)return null;const yp=num(resp.average_fill_price);return{count:n,price:o==="yes"?yp:1-yp,fee:num(resp.average_fee_paid)*n}}
+
+// ================= engine =================
+function record(name,pnl){const s=S.stats;pnl=Math.round(pnl*100)/100;const b=s.by_name[name]=s.by_name[name]||{wins:0,losses:0,pnl:0};
+  s.total_pnl=Math.round((s.total_pnl+pnl)*100)/100;b.pnl=Math.round((b.pnl+pnl)*100)/100;
+  if(pnl>0.01){s.wins++;b.wins++;s.gross_win+=pnl;s.streak=s.streak>0?s.streak+1:1}else if(pnl<-0.01){s.losses++;b.losses++;s.gross_loss-=pnl;s.streak=s.streak<0?s.streak-1:-1}else s.even++;
+  const t=new Date().toLocaleDateString("en-US",{timeZone:"America/New_York",month:"short",day:"numeric"});
+  if(!s.best||pnl>s.best.pnl)s.best={name,pnl,t};if(!s.worst||pnl<s.worst.pnl)s.worst={name,pnl,t};
+  const n=S.equity.length?S.equity[S.equity.length-1].n+1:1;S.equity.push({n,t:fmtT(new Date()),name,pnl,cum:s.total_pnl});S.equity=S.equity.slice(-500)}
+function closePos(pos,price,fe,reason){const pnl=(price-pos.entry_price)*pos.count-pos.entry_fee-fe;
+  S.positions=S.positions.filter(p=>p.id!==pos.id);S.day_realized+=pnl;S.last_exit[pos.name]=Date.now();record(pos.name,pnl);
+  logTrade({kind:"exit",name:pos.name,ticker:pos.ticker,outcome:pos.outcome,count:pos.count,price,pnl:Math.round(pnl*100)/100,reason})}
+const rungByTicker=t=>{for(const k in ladders)for(const r of ladders[k].rungs)if(r.ticker===t)return r;return null};
+const lossHalted=()=>S.day_realized<=-Math.abs(cfg.maxLoss);
+
+async function refreshSignals(){const reads={};ladders={};
+  await Promise.all(MARKETS.map(async([name,series,dp])=>{
+    try{const best=nearest(await marketsFor(series));
+      if(!best){reads[name]={name,dir:"none",strength:"no open market"};return}
+      const rd=readLadder(name,best[0],best[1]);ladders[name]=rd;
+      reads[name]={name,dp,dir:rd.dir,strength:rd.strength,now:rd.now,pct:rd.pct,close:fmtT(rd.close)}}
+    catch(e){reads[name]={name,dir:"none",strength:e.status===0?"can't reach Kalshi":"error "+e.status};if(e.status===0)throw e}}));
+  S.reads=reads}
+
+async function manage(){let held=null;
+  if(mode!=="paper"){try{held=await livePositions()}catch(e){}}
+  for(const pos of S.positions.slice()){
+    const r=rungByTicker(pos.ticker);const close=new Date(pos.close_time);
+    if(!r){try{const m=(await api("GET","/markets/"+pos.ticker)).market||{};const res=(m.result||"").toLowerCase();
+        if(res==="yes"||res==="no"){const pay=res===pos.outcome?1:0;if(mode==="paper")S.paper_balance+=pos.count*pay;closePos(pos,pay,0,"settled "+res.toUpperCase())}
+        else if(held&&!(pos.ticker in held)&&Date.now()>close)closePos(pos,pos.entry_price,0,"no longer held")}catch(e){}continue}
+    if(held&&!(pos.ticker in held)){closePos(pos,sellValue(r,pos.outcome),0,"closed outside the bot");continue}
+    const value=sellValue(r,pos.outcome),gain=pos.entry_price?(value-pos.entry_price)/pos.entry_price*100:0,rd=ladders[pos.name];let why=null;
+    if(S.killed)why="kill switch";else if(gain>=cfg.tp)why="take profit "+gain.toFixed(0)+"%";else if(gain<=-cfg.sl)why="stop loss "+gain.toFixed(0)+"%";
+    else if((close-Date.now())/36e5<=cfg.exitHoursBeforeClose)why="close to expiry";
+    else if(rd&&(rd.dir==="up"||rd.dir==="down")&&RANK[rd.strength]>=2&&(rd.dir==="up"?"yes":"no")!==pos.outcome)why="signal flipped "+rd.dir.toUpperCase();
+    if(!why||value<=0.01)continue;
+    try{const f=await sell(pos,r);if(f&&f.count>=pos.count)closePos(pos,f.price,f.fee,why);
+      else if(f){const part=Object.assign({},pos,{id:pos.id+"p",count:f.count,entry_fee:pos.entry_fee*f.count/pos.count});pos.entry_fee-=part.entry_fee;pos.count-=f.count;S.positions.push(part);closePos(part,f.price,f.fee,why+" (partial)")}}
+    catch(e){S.last_error="Sell failed: "+e.message}}}
+
+function pick(rd,o){let best=null;for(const r of rd.rungs){const c=buyCost(r,o);if(c<cfg.priceLo||c>cfg.priceHi||r.ask-r.bid>cfg.maxSpread||r.vol<cfg.minVol)continue;
+  const d=Math.abs(r.strike-rd.now);if(!best||d<best[0])best=[d,r]}return best&&best[1]}
+async function openNew(){if(S.paused||S.killed||lossHalted())return;
+  for(const name in ladders){const rd=ladders[name];
+    if(S.day_trades>=cfg.maxTrades||S.positions.length>=cfg.maxOpen)return;
+    if(S.positions.some(p=>p.name===name))continue;if(Date.now()-(S.last_exit[name]||0)<cfg.cooldownMin*6e4)continue;
+    if(rd.dir!=="up"&&rd.dir!=="down")continue;if((RANK[rd.strength]||0)<RANK[cfg.strength])continue;
+    if((rd.close-Date.now())/36e5<cfg.minHoursToClose)continue;
+    const o=rd.dir==="up"?"yes":"no",r=pick(rd,o);if(!r)continue;const count=Math.floor(cfg.maxTrade/(buyCost(r,o)+0.02));if(count<1)continue;
+    let f;try{f=await buy(r,o,count)}catch(e){S.last_error="Buy failed: "+e.message;continue}if(!f)continue;
+    const why=rd.dir.toUpperCase()+" "+rd.strength+" ("+(rd.pct>=0?"+":"")+rd.pct.toFixed(2)+"%)";
+    S.positions.push({id:r.ticker+"-"+Date.now(),name,ticker:r.ticker,strike:r.strike,outcome:o,count:f.count,entry_price:f.price,entry_fee:f.fee,close_time:rd.close.toISOString(),opened:fmtT(new Date()),why});
+    S.day_trades++;logTrade({kind:"entry",name,ticker:r.ticker,outcome:o,count:f.count,price:f.price,reason:why})}}
+
+async function cycle(){if(busy)return;busy=true;S.last_error="";
+  try{rollDay();await refreshSignals();await manage();await openNew();
+    S.balance=mode==="paper"?S.paper_balance:await liveBalance().catch(()=>S.balance);
+    S.last_cycle=fmtT(new Date());setConn("ok")}
+  catch(e){S.last_error=e.status===0?"":e.message;if(e.status===0)setConn("blocked")}
+  finally{busy=false;saveState();render()}}
+
+// ================= controls =================
+async function start(){
+  if(mode!=="paper"){
+    const id=$("keyId").value.trim(),pem=$("pem").value.trim();
+    if(!id||!pem){banner("Paste your API Key ID and private key first.");return}
+    if(mode==="live"&&$("confirm").value.trim()!==PHRASE){banner("Type the confirm phrase exactly to use real money.");return}
+    try{signer=await makeSigner(pem);liveKey={id,pem}}catch(e){banner("That private key couldn't be read. Paste the whole thing, including the BEGIN and END lines.");return}
+    try{S.balance=await liveBalance()}catch(e){banner(e.status===0?"Kalshi blocked the sign-in from this page.":e.status===401?"Kalshi rejected the key. "+(mode==="demo"?"Demo mode needs a key from demo.kalshi.co.":"Live mode needs a key from kalshi.com."):"Sign-in failed: "+e.message);signer=null;return}
+    if($("remember").checked)store.set("kb_key_"+mode,{id,pem});else store.del("kb_key_"+mode)}
+  running=true;S.killed=false;saveState();
+  try{wake=await navigator.wakeLock.request("screen")}catch(e){}
+  await cycle();clearInterval(timer);timer=setInterval(cycle,Math.max(20,cfg.every)*1000);render()}
+function stop(){running=false;clearInterval(timer);timer=null;try{wake&&wake.release()}catch(e){}wake=null;render()}
+document.addEventListener("visibilitychange",async()=>{if(running&&document.visibilityState==="visible"){try{wake=await navigator.wakeLock.request("screen")}catch(e){}cycle()}});
+
+function setMode(m){if(running){banner("Stop the bot before switching modes.");return}mode=m;store.set("kb_mode",m);loadState();signer=null;
+  const saved=store.get("kb_key_"+m,null);$("keyId").value=saved?saved.id:"";$("pem").value=saved?saved.pem:"";$("remember").checked=!!saved;$("confirm").value="";render()}
+function banner(msg){$("banners").innerHTML=`<div class="banner bad">${esc(msg)}</div>`}
+function setConn(s){const c=$("conn");if(s==="ok"){c.className="banner ok";c.textContent="Connected to Kalshi."}
+  else if(s==="blocked"){c.className="banner bad";c.innerHTML="Kalshi isn't letting this page connect. This happens when Kalshi blocks requests from web pages, or when you're offline. Tell Claude you saw this message."}}
+
+// ================= render =================
+function render(){
+  for(const m of ["paper","demo","live"])$("m-"+m).setAttribute("aria-pressed",String(m===mode));
+  $("keyBox").hidden=mode==="paper";$("confirmBox").hidden=mode!=="live";
+  $("modeNote").textContent=mode==="paper"?"Fake money on real Kalshi prices. No key needed.":mode==="demo"?"Kalshi's demo exchange with mock funds. Needs a key from demo.kalshi.co.":"REAL MONEY from your Kalshi account. Uses your kalshi.com key.";
+  $("startBtn").textContent=running?"Stop":"Start";$("startBtn").className=running?"stop":"go";
+  $("pauseBtn").textContent=S.paused?"Resume new trades":"Pause new trades";
+  $("dot").className="dot"+(running?" on":"");$("status").lastChild.textContent=running?("Running · "+mode.toUpperCase()+(S.last_cycle?" · checked "+S.last_cycle:"")):"Stopped";
+  let b="";if(S.killed)b+='<div class="banner bad">Killed: everything sold. Tap Start to trade again.</div>';
+  else if(lossHalted())b+='<div class="banner bad">Daily loss limit hit. No new trades until tomorrow.</div>';
+  else if(S.paused)b+='<div class="banner info">Paused: open trades are still managed, no new ones.</div>';
+  if(S.last_error)b+=`<div class="banner bad">${esc(S.last_error)}</div>`;if(b||!$("banners").innerHTML.includes("bad"))$("banners").innerHTML=b;
+  $("bal").textContent=S.balance==null?(mode==="paper"?money(S.paper_balance):"–"):money(S.balance);
+  $("today").textContent=money(S.day_realized);$("today").className="v "+(S.day_realized>0?"pos":S.day_realized<0?"neg":"");
+  $("nt").textContent=S.day_trades+" / "+cfg.maxTrades;
+  // record
+  const st=S.stats,n=st.wins+st.losses;
+  if(!n&&!st.even)$("record").innerHTML='<div class="muted">No finished trades yet. Your record starts with the first closed trade.</div>';
+  else{const wr=n?Math.round(st.wins/n*100):0,aw=st.wins?st.gross_win/st.wins:0,al=st.losses?st.gross_loss/st.losses:0;
+    const streak=st.streak>0?st.streak+" win"+(st.streak>1?"s":"")+" in a row":st.streak<0?(-st.streak)+" loss"+(st.streak<-1?"es":"")+" in a row":"–";
+    $("record").innerHTML=`<div><div class="big"><span class="pos">${st.wins}W</span> <span class="muted">–</span> <span class="neg">${st.losses}L</span></div><div class="mono muted">${wr}% win rate · ${streak}</div></div>
+    <div class="stats"><div><div class="k">Total P&amp;L</div><div class="v ${st.total_pnl>0?"pos":st.total_pnl<0?"neg":""}">${money(st.total_pnl)}</div></div><div><div class="k">Avg win</div><div class="v pos">${money(aw)}</div></div><div><div class="k">Avg loss</div><div class="v neg">${money(-al)}</div></div></div>
+    <div class="mono muted" style="font-size:12px">Best ${st.best?esc(st.best.name)+" "+money(st.best.pnl):"–"} · Worst ${st.worst?esc(st.worst.name)+" "+money(st.worst.pnl):"–"}</div>`+
+    Object.entries(st.by_name).map(([k,b])=>`<div class="row"><b>${esc(k)}</b><span class="mono"><span class="pos">${b.wins}W</span>–<span class="neg">${b.losses}L</span> · <span class="${b.pnl>0?"pos":b.pnl<0?"neg":""}">${money(b.pnl)}</span></span></div>`).join("")}
+  drawChart(S.equity);winAlerts();
+  const word={up:"▲ UP",down:"▼ DOWN",flat:"◆ FLAT",none:"– N/A"};const rs=Object.values(S.reads||{});
+  if(rs.length)$("signals").innerHTML=rs.map(r=>`<div class="row"><div><b>${esc(r.name)}</b><div class="mono muted" style="font-size:12px">${r.close?"closes "+esc(r.close):esc(r.strength)}${r.now!=null?" · 50/50 "+r.now.toFixed(r.dp)+" ("+(r.pct>=0?"+":"")+r.pct.toFixed(2)+"%)":""}</div></div><span class="chip ${r.dir}">${word[r.dir]}${r.dir==="up"||r.dir==="down"?"<br><small>"+esc(r.strength)+"</small>":""}</span></div>`).join("");
+  $("positions").innerHTML=S.positions.map(p=>{const r=rungByTicker(p.ticker),v=r?sellValue(r,p.outcome):null,u=v!=null?(v-p.entry_price)*p.count-p.entry_fee:null;
+    return `<div class="row"><div><b>${esc(p.name)}</b> · ${p.outcome.toUpperCase()} x${p.count}<div class="mono muted" style="font-size:12px">above ${p.strike} · in at ${(p.entry_price*100).toFixed(0)}¢ · ${esc(p.opened)}</div></div><div class="mono">${v!=null?(v*100).toFixed(0)+"¢ ":""}<span class="${u>0?"pos":u<0?"neg":""}">${u!=null?money(u):""}</span></div></div>`}).join("")||'<div class="muted">No open positions.</div>';
+  $("trades").innerHTML=S.trades.slice(-30).reverse().map(t=>t.kind==="control"?`<tr><td>${esc(t.t)}</td><td colspan="3"><b>${esc(t.name)}</b></td></tr>`:
+    `<tr><td>${esc(t.t)}</td><td>${t.kind==="entry"?"BUY":"SELL"} ${esc(t.name)} ${t.outcome.toUpperCase()} x${t.count} @ ${(t.price*100).toFixed(0)}¢</td><td class="${t.pnl>0?"pos":t.pnl<0?"neg":""}">${t.pnl!=null?money(t.pnl):""}</td><td class="muted">${esc(t.reason||"")}</td></tr>`).join("")||'<tr><td class="muted">No trades yet.</td></tr>';
+}
+function drawChart(eq){
+  if(!eq.length){$("chart").innerHTML='<div class="muted">The chart starts after the first finished trade.</div>';return}
+  const W=600,H=200,L=56,R=12,T=12,B=26,pts=[{cum:0}].concat(eq),ys=pts.map(p=>p.cum);let lo=Math.min(0,...ys),hi=Math.max(0,...ys);if(hi-lo<1){hi+=.5;lo-=.5}
+  const pad=(hi-lo)*.08;lo-=pad;hi+=pad;const x=i=>L+(W-L-R)*(pts.length===1?0:i/(pts.length-1)),y=v=>T+(H-T-B)*(hi-v)/(hi-lo);
+  const line=pts.map((p,i)=>(i?"L":"M")+x(i).toFixed(1)+","+y(p.cum).toFixed(1)).join(""),last=pts[pts.length-1].cum,col=last>=0?"var(--up)":"var(--down)";
+  const ticks=[hi-pad,(hi+lo)/2,lo+pad].map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${money(v)}</text>`).join("");
+  $("chart").innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Running profit, now ${money(last)}">${ticks}<line x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 4"/>
+  <path d="${line}L${x(pts.length-1)},${y(0)}L${L},${y(0)}Z" fill="${col}" opacity=".12"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>
+  <circle cx="${x(pts.length-1)}" cy="${y(last)}" r="4.5" fill="${col}"/><text x="${L}" y="${H-6}">Trade 1</text><text x="${W-R}" y="${H-6}" text-anchor="end">Trade ${eq.length} · ${money(last)}</text></svg>`}
+function winAlerts(){const eq=S.equity,lastN=eq.length?eq[eq.length-1].n:0;if(S.seen==null)S.seen=lastN;
+  const fresh=eq.filter(e=>e.n>S.seen&&e.pnl>0.01);
+  if(fresh.length>3){const sum=fresh.reduce((a,e)=>a+e.pnl,0);toast("+"+money(sum),fresh.length+" winning trades")}else fresh.forEach(e=>toast("+"+money(e.pnl),e.name+" win · total "+money(e.cum)));
+  if(lastN>S.seen){S.seen=lastN;saveState()}}
+function toast(big,small){const d=document.createElement("div");d.className="toast";d.innerHTML=`<div><b>${esc(big)}</b><small>${esc(small)}</small></div><button aria-label="Dismiss">×</button>`;
+  d.querySelector("button").onclick=()=>d.remove();$("toasts").appendChild(d);setTimeout(()=>d.remove(),12000)}
+
+// ================= wire up =================
+for(const m of ["paper","demo","live"])$("m-"+m).onclick=()=>setMode(m);
+$("startBtn").onclick=()=>running?stop():start();
+$("pauseBtn").onclick=()=>{S.paused=!S.paused;logTrade({kind:"control",name:S.paused?"Paused":"Resumed"});saveState();render()};
+$("killBtn").onclick=()=>{$("killConfirm").hidden=false};$("killNo").onclick=()=>{$("killConfirm").hidden=true};
+$("killYes").onclick=async()=>{$("killConfirm").hidden=true;S.killed=true;logTrade({kind:"control",name:"Kill: selling everything"});saveState();
+  if(!running&&S.positions.length&&mode!=="paper"&&!signer){banner("Tap Start with your key loaded so the bot can sell your open trades.");render();return}
+  await cycle();stop()};
+const SET=[["maxTrade","s-maxTrade"],["maxLoss","s-maxLoss"],["tp","s-tp"],["sl","s-sl"],["maxOpen","s-maxOpen"],["maxTrades","s-maxTrades"],["every","s-every"]];
+function fillSettings(){for(const [k,id] of SET)$(id).value=cfg[k];$("s-strength").value=cfg.strength}
+$("saveSettings").onclick=()=>{for(const [k,id] of SET){const v=num($(id).value,cfg[k]);if(v>0)cfg[k]=v}cfg.strength=$("s-strength").value;store.set("kb_cfg",cfg);
+  if(running){clearInterval(timer);timer=setInterval(cycle,Math.max(20,cfg.every)*1000)}$("banners").innerHTML='<div class="banner ok">Settings saved.</div>'};
+$("resetPaper").onclick=()=>{if(mode!=="paper"){banner("Switch to Paper to reset the paper account.");return}if(running)stop();S=freshState();saveState();render()};
+$("forget").onclick=()=>{store.del("kb_key_demo");store.del("kb_key_live");$("keyId").value="";$("pem").value="";$("remember").checked=false;$("banners").innerHTML='<div class="banner ok">Saved keys removed from this phone.</div>'};
+
+fillSettings();setMode(mode);
+// Connection test: one public call to Kalshi.
+api("GET","/exchange/status").then(()=>setConn("ok")).catch(e=>setConn(e.status===0?"blocked":"ok"));
+</script>
+</body></html>
