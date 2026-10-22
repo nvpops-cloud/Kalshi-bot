@@ -74,6 +74,12 @@ table{width:100%;border-collapse:collapse;font:12.5px ui-monospace,Menlo,monospa
       <button id="m-live" data-mode="live" class="live">Live $</button>
     </div>
     <div id="modeNote" class="muted" style="font-size:14px"></div>
+    <div class="k" style="margin-top:4px">Markets</div>
+    <div class="modes" role="group" aria-label="Markets" style="grid-template-columns:1fr 1fr">
+      <button id="sp-fast" data-speed="fast">15-minute</button>
+      <button id="sp-slow" data-speed="slow">Daily / weekly</button>
+    </div>
+    <div id="speedNote" class="muted" style="font-size:14px"></div>
     <div id="keyBox" hidden>
       <div class="field"><label for="keyId">API Key ID</label><input id="keyId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="from Kalshi's API Keys page"></div>
       <div class="field" style="margin-top:10px"><label for="pem">Private key</label><textarea id="pem" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----"></textarea></div>
@@ -128,8 +134,14 @@ const PHRASE="I understand I can lose real money";
 const MARKETS=[["Gold",["KXGOLDD","KXGOLDMON"],0],["Silver",["KXSILVERD","KXSILVERW","KXSILVERMON"],2],["WTI Crude",["KXWTI"],2],
   ["Natural Gas",["KXNATGASD","KXNATGASW"],3],["Copper",["KXCOPPERD","KXCOPPERW","KXCOPPERMON"],3]];
 const MAX_QUOTE_GAP=0.15; // strikes with a bid/ask gap wider than this are ignored when finding the 50/50 price
-const DEFAULTS={maxTrade:10,maxLoss:25,tp:40,sl:35,maxOpen:3,maxTrades:10,strength:"moderate",every:60,
-  maxSpread:0.04,minVol:50,priceLo:0.35,priceHi:0.65,minHoursToClose:2,exitHoursBeforeClose:1,cooldownMin:60,paperStart:500};
+// 15-minute markets: one "price up in next 15 mins?" contract per commodity, a new one every 15 minutes.
+const FAST=[["Gold","KXGOLD15M",2],["Silver","KXSILVER15M",3],["WTI Crude","KXWTI15M",2],["Brent","KXBRENT15M",2],
+  ["Natural Gas","KXNATGAS15M",3],["Copper","KXCOPPER15M",4],["Platinum","KXPLATINUM15M",2],["Palladium","KXPALLADIUM15M",2]];
+const DEFAULTS={maxTrade:2,maxLoss:6,tp:40,sl:35,maxOpen:3,maxTrades:20,strength:"moderate",every:60,
+  maxSpread:0.04,minVol:50,priceLo:0.35,priceHi:0.65,minHoursToClose:2,exitHoursBeforeClose:1,cooldownMin:60,paperStart:500,
+  speed:"fast",favLo:0.80,favHi:0.92,fastEnterHi:4,fastEnterLo:1.5,fastMaxSpread:0.03};
+let fastMk={}; // name -> current 15-minute market
+const tick=()=>cfg.speed==="fast"?20:Math.max(20,cfg.every);
 const RANK={"no clear lean":0,"no data":0,slight:1,moderate:2,strong:3};
 const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
@@ -237,7 +249,41 @@ function record(name,pnl){const s=S.stats;pnl=Math.round(pnl*100)/100;const b=s.
 function closePos(pos,price,fe,reason){const pnl=(price-pos.entry_price)*pos.count-pos.entry_fee-fe;
   S.positions=S.positions.filter(p=>p.id!==pos.id);S.day_realized+=pnl;S.last_exit[pos.name]=Date.now();record(pos.name,pnl);
   logTrade({kind:"exit",name:pos.name,ticker:pos.ticker,outcome:pos.outcome,count:pos.count,price,pnl:Math.round(pnl*100)/100,reason})}
-const rungByTicker=t=>{for(const k in ladders)for(const r of ladders[k].rungs)if(r.ticker===t)return r;return null};
+const rungByTicker=t=>{for(const k in fastMk)if(fastMk[k].ticker===t)return fastMk[k];for(const k in ladders)for(const r of ladders[k].rungs)if(r.ticker===t)return r;return null};
+
+// ---------- 15-minute mode ----------
+async function refreshFast(){const reads={};fastMk={};const now=Math.floor(Date.now()/1000);
+  await Promise.all(FAST.map(async([name,series,dp])=>{
+    try{const d=await api("GET","/markets",{params:{series_ticker:series,status:"open",min_close_ts:now,max_close_ts:now+20*60,limit:20}});
+      const ms=(d.markets||[]).filter(m=>(m.status==="active"||m.status==="open")&&new Date(m.close_time)>Date.now())
+        .sort((a,b)=>new Date(a.close_time)-new Date(b.close_time));
+      const m=ms[0];if(!m){reads[name]={name,dir:"none",strength:"no 15-min market open now"};return}
+      const k={ticker:m.ticker,name,close:new Date(m.close_time),strike:num(m.floor_strike),bid:num(m.yes_bid_dollars),ask:num(m.yes_ask_dollars,1)||1,
+        bidSize:num(m.yes_bid_size_fp),askSize:num(m.yes_ask_size_fp),dp};fastMk[name]=k;
+      const p=(k.bid+k.ask)/2,mins=(k.close-Date.now())/6e4;
+      reads[name]={name,dp,dir:p>=0.55?"up":p<=0.45?"down":"flat",strength:Math.round(p*100)+"% chance up",
+        fast:true,mins,start:k.strike,close:fmtT(k.close)}}
+    catch(e){reads[name]={name,dir:"none",strength:e.status===0?"can't reach Kalshi":"error "+e.status};if(e.status===0)throw e}}));
+  S.reads=reads}
+
+async function openFast(){if(S.paused||S.killed||lossHalted())return;
+  for(const name in fastMk){const k=fastMk[name];
+    if(S.day_trades>=cfg.maxTrades||S.positions.length>=cfg.maxOpen)return;
+    if(S.positions.some(p=>p.name===name))continue;
+    S.last_fast=S.last_fast||{};if(S.last_fast[name]===k.ticker)continue; // one trade per 15-minute window
+    const mins=(k.close-Date.now())/6e4;if(mins>cfg.fastEnterHi||mins<cfg.fastEnterLo)continue;
+    if(k.ask-k.bid>cfg.fastMaxSpread)continue;
+    let o=null,cost=0,depth=0;
+    if(k.ask>=cfg.favLo&&k.ask<=cfg.favHi){o="yes";cost=k.ask;depth=k.askSize}
+    else if(1-k.bid>=cfg.favLo&&1-k.bid<=cfg.favHi){o="no";cost=1-k.bid;depth=k.bidSize}
+    if(!o)continue;
+    let count=Math.floor(cfg.maxTrade/(cost+0.01));if(depth>0)count=Math.min(count,Math.floor(depth));if(count<1)continue;
+    let f;try{f=await buy(k,o,count)}catch(e){S.last_error="Buy failed: "+e.message;continue}
+    S.last_fast[name]=k.ticker;if(!f)continue;
+    const why=`${o==="yes"?"UP":"DOWN"} favorite at ${(cost*100).toFixed(0)}¢, ${mins.toFixed(1)} min left`;
+    S.positions.push({id:k.ticker+"-"+Date.now(),name,ticker:k.ticker,strike:k.strike,outcome:o,count:f.count,entry_price:f.price,entry_fee:f.fee,
+      close_time:k.close.toISOString(),opened:fmtT(new Date()),openedAt:Date.now(),why,fast:true});
+    S.day_trades++;logTrade({kind:"entry",name,ticker:k.ticker,outcome:o,count:f.count,price:f.price,reason:why})}}
 const lossHalted=()=>S.day_realized<=-Math.abs(cfg.maxLoss);
 
 async function refreshSignals(){const reads={};ladders={};
@@ -256,10 +302,16 @@ async function manage(){let held=null;
     const r=rungByTicker(pos.ticker);const close=new Date(pos.close_time);
     if(!r){try{const m=(await api("GET","/markets/"+pos.ticker)).market||{};const res=(m.result||"").toLowerCase();
         if(res==="yes"||res==="no"){const pay=res===pos.outcome?1:0;if(mode==="paper")S.paper_balance+=pos.count*pay;closePos(pos,pay,0,"settled "+res.toUpperCase())}
-        else if(held&&!(pos.ticker in held)&&Date.now()>close)closePos(pos,pos.entry_price,0,"no longer held")}catch(e){}continue}
-    if(held&&!(pos.ticker in held)){closePos(pos,sellValue(r,pos.outcome),0,"closed outside the bot");continue}
+        else if(held&&!(pos.ticker in held)&&Date.now()>close+30*6e4)closePos(pos,pos.entry_price,0,"no longer held")}catch(e){}continue}
+    // Kalshi's position list can lag right after a fill. Only treat a trade as closed outside the bot after it has been
+    // missing for 3 checks in a row and is more than 3 minutes old.
+    if(held&&!(pos.ticker in held)){pos.missing=(pos.missing||0)+1;
+      if(pos.missing>=3&&Date.now()-(pos.openedAt||0)>18e4){closePos(pos,sellValue(r,pos.outcome),0,"closed outside the bot (check Kalshi app)");}
+      continue}
+    pos.missing=0;
     const value=sellValue(r,pos.outcome),gain=pos.entry_price?(value-pos.entry_price)/pos.entry_price*100:0,rd=ladders[pos.name];let why=null;
-    if(S.killed)why="kill switch";else if(gain>=cfg.tp)why="take profit "+gain.toFixed(0)+"%";else if(gain<=-cfg.sl)why="stop loss "+gain.toFixed(0)+"%";
+    if(pos.fast){if(!S.killed)continue;why="kill switch"} // 15-minute trades are held until they settle
+    else if(S.killed)why="kill switch";else if(gain>=cfg.tp)why="take profit "+gain.toFixed(0)+"%";else if(gain<=-cfg.sl)why="stop loss "+gain.toFixed(0)+"%";
     else if((close-Date.now())/36e5<=cfg.exitHoursBeforeClose)why="close to expiry";
     else if(rd&&(rd.dir==="up"||rd.dir==="down")&&RANK[rd.strength]>=2&&(rd.dir==="up"?"yes":"no")!==pos.outcome)why="signal flipped "+rd.dir.toUpperCase();
     if(!why||value<=0.01)continue;
@@ -278,11 +330,13 @@ async function openNew(){if(S.paused||S.killed||lossHalted())return;
     const o=rd.dir==="up"?"yes":"no",r=pick(rd,o);if(!r)continue;const count=Math.floor(cfg.maxTrade/(buyCost(r,o)+0.02));if(count<1)continue;
     let f;try{f=await buy(r,o,count)}catch(e){S.last_error="Buy failed: "+e.message;continue}if(!f)continue;
     const why=rd.dir.toUpperCase()+" "+rd.strength+" ("+(rd.pct>=0?"+":"")+rd.pct.toFixed(2)+"%)";
-    S.positions.push({id:r.ticker+"-"+Date.now(),name,ticker:r.ticker,strike:r.strike,outcome:o,count:f.count,entry_price:f.price,entry_fee:f.fee,close_time:rd.close.toISOString(),opened:fmtT(new Date()),why});
+    S.positions.push({id:r.ticker+"-"+Date.now(),name,ticker:r.ticker,strike:r.strike,outcome:o,count:f.count,entry_price:f.price,entry_fee:f.fee,close_time:rd.close.toISOString(),opened:fmtT(new Date()),openedAt:Date.now(),why});
     S.day_trades++;logTrade({kind:"entry",name,ticker:r.ticker,outcome:o,count:f.count,price:f.price,reason:why})}}
 
 async function cycle(){if(busy)return;busy=true;S.last_error="";
-  try{rollDay();await refreshSignals();await manage();await openNew();
+  try{rollDay();
+    if(cfg.speed==="fast"){await refreshFast();await manage();await openFast()}
+    else{await refreshSignals();await manage();await openNew()}
     S.balance=mode==="paper"?S.paper_balance:await liveBalance().catch(()=>S.balance);
     S.last_cycle=fmtT(new Date());setConn("ok")}
   catch(e){S.last_error=e.status===0?"":e.message;if(e.status===0)setConn("blocked")}
@@ -299,7 +353,7 @@ async function start(){
     if($("remember").checked)store.set("kb_key_"+mode,{id,pem});else store.del("kb_key_"+mode)}
   running=true;S.killed=false;saveState();
   try{wake=await navigator.wakeLock.request("screen")}catch(e){}
-  await cycle();clearInterval(timer);timer=setInterval(cycle,Math.max(20,cfg.every)*1000);render()}
+  await cycle();clearInterval(timer);timer=setInterval(cycle,tick()*1000);render()}
 function stop(){running=false;clearInterval(timer);timer=null;try{wake&&wake.release()}catch(e){}wake=null;render()}
 document.addEventListener("visibilitychange",async()=>{if(running&&document.visibilityState==="visible"){try{wake=await navigator.wakeLock.request("screen")}catch(e){}cycle()}});
 
@@ -316,6 +370,8 @@ function render(){
   for(const m of ["paper","demo","live"])$("m-"+m).setAttribute("aria-pressed",String(m===mode));
   $("keyBox").hidden=mode==="paper";$("confirmBox").hidden=mode!=="live";
   $("modeNote").textContent=mode==="paper"?"Fake money on real Kalshi prices. No key needed.":mode==="demo"?"Kalshi's demo exchange with mock funds. Needs a key from demo.kalshi.co.":"REAL MONEY from your Kalshi account. Uses your kalshi.com key.";
+  for(const sp of ["fast","slow"])$("sp-"+sp).setAttribute("aria-pressed",String(cfg.speed===sp));
+  $("speedNote").textContent=cfg.speed==="fast"?`Every 15 minutes, buys the side priced ${Math.round(cfg.favLo*100)}–${Math.round(cfg.favHi*100)}¢ with ${cfg.fastEnterLo}–${cfg.fastEnterHi} min left, then holds it until it settles.`:"Follows the 24-hour lean on daily, weekly and monthly markets. Trades are held for hours.";
   $("startBtn").textContent=running?"Stop":"Start";$("startBtn").className=running?"stop":"go";
   $("pauseBtn").textContent=S.paused?"Resume new trades":"Pause new trades";
   $("dot").className="dot"+(running?" on":"");$("status").lastChild.textContent=running?("Running · "+mode.toUpperCase()+(S.last_cycle?" · checked "+S.last_cycle:"")):"Stopped";
@@ -340,7 +396,9 @@ function render(){
     Object.entries(st.by_name).map(([k,b])=>`<div class="row"><b>${esc(k)}</b><span class="mono"><span class="pos">${b.wins}W</span>–<span class="neg">${b.losses}L</span> · <span class="${b.pnl>0?"pos":b.pnl<0?"neg":""}">${money(b.pnl)}</span></span></div>`).join("")}
   drawChart(S.equity);winAlerts();
   const word={up:"▲ UP",down:"▼ DOWN",flat:"◆ FLAT",none:"– N/A"};const rs=Object.values(S.reads||{});
-  if(rs.length)$("signals").innerHTML=rs.map(r=>`<div class="row"><div><b>${esc(r.name)}</b><div class="mono muted" style="font-size:12px">${r.close?"closes "+esc(r.close):esc(r.strength)}${r.now!=null?" · 50/50 "+r.now.toFixed(r.dp)+" ("+(r.pct>=0?"+":"")+r.pct.toFixed(2)+"%)":""}</div></div><span class="chip ${r.dir}">${word[r.dir]}${r.dir==="up"||r.dir==="down"?"<br><small>"+esc(r.strength)+"</small>":""}</span></div>`).join("");
+  if(rs.length)$("signals").innerHTML=rs.map(r=>r.fast?
+    `<div class="row"><div><b>${esc(r.name)}</b><div class="mono muted" style="font-size:12px">15-min · ${r.mins.toFixed(1)} min left · start ${r.start.toFixed(r.dp)}</div></div><span class="chip ${r.dir}">${word[r.dir]}<br><small>${esc(r.strength)}</small></span></div>`:
+    `<div class="row"><div><b>${esc(r.name)}</b><div class="mono muted" style="font-size:12px">${r.close?"closes "+esc(r.close):esc(r.strength)}${r.now!=null?" · 50/50 "+r.now.toFixed(r.dp)+" ("+(r.pct>=0?"+":"")+r.pct.toFixed(2)+"%)":""}</div></div><span class="chip ${r.dir}">${word[r.dir]}${r.dir==="up"||r.dir==="down"?"<br><small>"+esc(r.strength)+"</small>":""}</span></div>`).join("");
   $("positions").innerHTML=S.positions.map(p=>{const r=rungByTicker(p.ticker),v=r?sellValue(r,p.outcome):null,u=v!=null?(v-p.entry_price)*p.count-p.entry_fee:null;
     return `<div class="row"><div><b>${esc(p.name)}</b> · ${p.outcome.toUpperCase()} x${p.count}<div class="mono muted" style="font-size:12px">above ${p.strike} · in at ${(p.entry_price*100).toFixed(0)}¢ · ${esc(p.opened)}</div></div><div class="mono">${v!=null?(v*100).toFixed(0)+"¢ ":""}<span class="${u>0?"pos":u<0?"neg":""}">${u!=null?money(u):""}</span></div></div>`}).join("")||'<div class="muted">No open positions.</div>';
   $("trades").innerHTML=S.trades.slice(-30).reverse().map(t=>t.kind==="control"?`<tr><td>${esc(t.t)}</td><td colspan="3"><b>${esc(t.name)}</b></td></tr>`:
@@ -364,6 +422,8 @@ function toast(big,small){const d=document.createElement("div");d.className="toa
 
 // ================= wire up =================
 for(const m of ["paper","demo","live"])$("m-"+m).onclick=()=>setMode(m);
+for(const sp of ["fast","slow"])$("sp-"+sp).onclick=()=>{cfg.speed=sp;store.set("kb_cfg",cfg);
+  if(running){clearInterval(timer);timer=setInterval(cycle,tick()*1000);cycle()}render()};
 $("startBtn").onclick=()=>running?stop():start();
 $("pauseBtn").onclick=()=>{S.paused=!S.paused;logTrade({kind:"control",name:S.paused?"Paused":"Resumed"});saveState();render()};
 $("killBtn").onclick=()=>{$("killConfirm").hidden=false};$("killNo").onclick=()=>{$("killConfirm").hidden=true};
@@ -373,7 +433,7 @@ $("killYes").onclick=async()=>{$("killConfirm").hidden=true;S.killed=true;logTra
 const SET=[["maxTrade","s-maxTrade"],["maxLoss","s-maxLoss"],["tp","s-tp"],["sl","s-sl"],["maxOpen","s-maxOpen"],["maxTrades","s-maxTrades"],["every","s-every"]];
 function fillSettings(){for(const [k,id] of SET)$(id).value=cfg[k];$("s-strength").value=cfg.strength}
 $("saveSettings").onclick=()=>{for(const [k,id] of SET){const v=num($(id).value,cfg[k]);if(v>0)cfg[k]=v}cfg.strength=$("s-strength").value;store.set("kb_cfg",cfg);
-  if(running){clearInterval(timer);timer=setInterval(cycle,Math.max(20,cfg.every)*1000)}$("banners").innerHTML='<div class="banner ok">Settings saved.</div>'};
+  if(running){clearInterval(timer);timer=setInterval(cycle,tick()*1000)}$("banners").innerHTML='<div class="banner ok">Settings saved.</div>'};
 $("resetPaper").onclick=()=>{if(mode!=="paper"){banner("Switch to Paper to reset the paper account.");return}if(running)stop();S=freshState();saveState();render()};
 $("forget").onclick=()=>{store.del("kb_key_demo");store.del("kb_key_live");$("keyId").value="";$("pem").value="";$("remember").checked=false;$("banners").innerHTML='<div class="banner ok">Saved keys removed from this phone.</div>'};
 
