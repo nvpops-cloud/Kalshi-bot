@@ -167,7 +167,9 @@ async function makeSigner(pem){
   const k=await crypto.subtle.importKey("pkcs8",der,{name:"RSA-PSS",hash:"SHA-256"},false,["sign"]);
   return async m=>b64(await crypto.subtle.sign({name:"RSA-PSS",saltLength:32},k,new TextEncoder().encode(m)))}
 class ApiError extends Error{constructor(status,body){super("Kalshi "+status+": "+body);this.status=status}}
-let relay=store.get("kb_relay","");
+// On the laptop, the bot's own little server (server.py) passes requests to Kalshi, so no relay setup is needed.
+const LOCAL=/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+let relay=LOCAL?location.origin+"/relay":store.get("kb_relay","");
 async function api(method,path,{params,body,signed=false}={}){
   const base=URLS[mode];
   // Kalshi blocks web pages, so requests go through your own Cloudflare relay when one is set.
